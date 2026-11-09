@@ -31,3 +31,7 @@ input[type="range"] {
 .tabular {
   font-variant-numeric: tabular-nums;
 }
+
+.bar-fill {
+  transition: width 180ms ease;
+}

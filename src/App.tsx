@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { lessons, lessonsIn, type LessonMeta, type Part } from "./curriculum";
 import { labs } from "./lessons";
+import { Studio } from "./studio";
 
 function readDone(id: string): boolean {
   try {
@@ -81,6 +82,7 @@ function Map({ done, onOpen }: { done: Record<string, boolean>; onOpen: (id: str
           Mark a field once you can answer its interview question without the sliders. {algebraDone + calculusDone} of {lessons.length} marked.
         </p>
       </div>
+      <Studio onOpen={onOpen} />
       <div className="mt-6 grid items-start gap-4 lg:grid-cols-2">
         <Track part="algebra" title="Algebra" detail="Lists, tables, and the one number a pair of lists can make." done={done} count={algebraDone} onOpen={onOpen} />
         <Track part="calculus" title="Calculus" detail="How a loss moves when a weight moves, and how a network multiplies those moves." done={done} count={calculusDone} onOpen={onOpen} />

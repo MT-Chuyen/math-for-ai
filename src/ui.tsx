@@ -235,31 +235,56 @@ export function Frame({ children }: { children: ReactNode }) {
 
 export function Chain({
   factors,
-  result,
+  through,
+  running,
+  resultName,
 }: {
   factors: { name: string; value: number; why: string }[];
-  result: { name: string; value: number };
+  through: number;
+  running: number;
+  resultName: string;
 }) {
+  const reached = factors.slice(0, through + 1);
+  const gateShut = reached.some((factor) => factor.name === "dh/dz" && factor.value === 0);
+  const killed = gateShut || reached.some((factor) => factor.value === 0);
+  const finished = through >= factors.length - 1;
   return (
-    <div className="overflow-x-auto">
-      <div className="flex min-w-max items-stretch gap-2">
-        {factors.map((factor, index) => (
-          <div key={factor.name} className="flex items-stretch gap-2">
-            <div className="w-36 rounded-md bg-white p-2 shadow-sm">
-              <div className="font-serif text-slate-900">{factor.name}</div>
-              <div className="font-mono text-lg tabular">
-                <Num value={factor.value} />
+    <div className="max-w-full space-y-2">
+      <ol className="space-y-2">
+        {factors.map((factor, index) => {
+          const open = index <= through;
+          const current = index === through;
+          const dead = open && factor.value === 0;
+          return (
+            <li
+              key={factor.name}
+              className={`max-w-full rounded-md px-3 py-2 ${dead ? "bg-amber-50" : current ? "bg-white ring-2 ring-[#172554]" : open ? "bg-white" : "bg-slate-100"}`}
+            >
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                <span className={`font-serif ${open ? "text-slate-900" : "text-slate-400"}`}>{factor.name}</span>
+                {open ? (
+                  <span className={`font-mono text-lg tabular ${dead ? "text-amber-800" : "text-slate-900"}`}>{fmt(factor.value)}</span>
+                ) : (
+                  <span className="text-xs text-slate-400">next</span>
+                )}
               </div>
-              <p className="text-xs leading-snug text-slate-500">{factor.why}</p>
-            </div>
-            <span className="self-center text-slate-400">{index === factors.length - 1 ? "=" : "×"}</span>
-          </div>
-        ))}
-        <div className="w-36 rounded-md bg-emerald-700 p-2 text-white">
-          <div className="font-serif">{result.name}</div>
-          <div className="font-mono text-lg tabular">{fmt(result.value)}</div>
-        </div>
-      </div>
+              {open ? <p className={`mt-1 text-xs leading-snug ${dead ? "text-amber-950" : "text-slate-500"}`}>{factor.why}</p> : null}
+            </li>
+          );
+        })}
+      </ol>
+      <p className={`rounded-md px-3 py-2 text-sm leading-relaxed ${killed ? "bg-amber-50 text-amber-950" : "bg-emerald-700 text-white"}`}>
+        <span className="font-semibold">{finished ? resultName : "Running product"}</span>
+        {" = "}
+        <span className="font-mono tabular">{fmt(running)}</span>
+        {gateShut
+          ? ". The ReLU gate dh/dz is 0, so this product is 0 and stays 0."
+          : killed
+            ? ". A factor above is 0, so the whole product is 0."
+            : finished
+              ? "."
+              : ". The next factor has not been multiplied yet."}
+      </p>
     </div>
   );
 }

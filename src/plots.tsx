@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { fmt } from "./ui";
 
 export function Curve({
@@ -10,6 +10,7 @@ export function Curve({
   chord,
   trail = [],
   height = 240,
+  onScrub,
 }: {
   f: (x: number) => number;
   xMin: number;
@@ -19,6 +20,7 @@ export function Curve({
   chord?: { x0: number; x1: number };
   trail?: number[];
   height?: number;
+  onScrub?: (x: number) => void;
 }) {
   const width = 640;
   const pad = 28;
@@ -58,8 +60,29 @@ export function Curve({
     chordLine = segment(mid - reach, midY - slope * reach, mid + reach, midY + slope * reach);
   }
 
+  function scrub(event: ReactPointerEvent<SVGSVGElement>) {
+    if (!onScrub) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const px = ((event.clientX - rect.left) / rect.width) * width;
+    const next = xMin + ((px - pad) / (width - pad * 2)) * (xMax - xMin);
+    onScrub(Math.min(xMax, Math.max(xMin, next)));
+  }
+
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full rounded-lg bg-white" role="img">
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className={`w-full rounded-lg bg-white ${onScrub ? "cursor-ew-resize touch-none" : ""}`}
+      role="img"
+      onPointerDown={(event) => {
+        if (!onScrub) return;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        scrub(event);
+      }}
+      onPointerMove={(event) => {
+        if (!onScrub || event.buttons !== 1) return;
+        scrub(event);
+      }}
+    >
       <line x1={pad} y1={Y(0)} x2={width - pad} y2={Y(0)} stroke="#cbd5e1" />
       <polyline fill="none" stroke="#172554" strokeWidth="2.5" points={line} />
       {chordLine ? <line {...chordLine} stroke="#d97706" strokeWidth="2" /> : null}
@@ -68,7 +91,12 @@ export function Curve({
         <circle key={index} cx={X(x)} cy={Y(f(x))} r="3" fill="#93c5fd" />
       ))}
       {marker !== undefined && marker >= xMin && marker <= xMax && Number.isFinite(f(marker)) ? (
-        <circle cx={X(marker)} cy={Y(f(marker))} r="5" fill="#1d4ed8" />
+        <circle cx={X(marker)} cy={Y(f(marker))} r={onScrub ? 8 : 5} fill="#1d4ed8" />
+      ) : null}
+      {onScrub ? (
+        <text x={width - pad - 92} y={16} fill="#64748b" fontSize="12">
+          drag the dot
+        </text>
       ) : null}
       <text x={pad} y={16} fill="#64748b" fontSize="12">
         high {fmt(yMax, 1)}
@@ -85,11 +113,15 @@ export function VectorPlane({
   polygon,
   marker,
   onPick,
+  onDrag,
+  lock,
 }: {
   vectors: { x: number; y: number; color: string; label: string }[];
   polygon?: { x: number; y: number }[];
   marker?: { x: number; y: number };
   onPick?: (x: number, y: number) => void;
+  onDrag?: (label: string, x: number, y: number) => void;
+  lock?: number;
 }) {
   const size = 360;
   const points = [
@@ -99,7 +131,7 @@ export function VectorPlane({
     { x: 2.2, y: 2.2 },
     { x: -2.2, y: -2.2 },
   ];
-  const max = Math.max(2.4, ...points.flatMap((point) => [Math.abs(point.x), Math.abs(point.y)])) * 1.25;
+  const max = lock ?? Math.max(2.4, ...points.flatMap((point) => [Math.abs(point.x), Math.abs(point.y)])) * 1.25;
   const center = size / 2;
   const scale = (size * 0.42) / max;
   const px = (x: number) => center + x * scale;
@@ -118,17 +150,52 @@ export function VectorPlane({
     return <polygon points={`${tipX},${tipY} ${ax},${ay} ${bx},${by}`} fill={color} />;
   }
 
+  const held = useRef<string | null>(null);
+
+  function at(event: ReactPointerEvent<SVGSVGElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const sx = ((event.clientX - rect.left) / rect.width) * size;
+    const sy = ((event.clientY - rect.top) / rect.height) * size;
+    return { sx, sy, x: (sx - center) / scale, y: (center - sy) / scale };
+  }
+
+  function move(event: ReactPointerEvent<SVGSVGElement>, starting: boolean) {
+    const point = at(event);
+    if (starting && onDrag) {
+      let best: string | null = null;
+      let bestDist = 36;
+      for (const vector of vectors) {
+        const dist = Math.hypot(px(vector.x) - point.sx, py(vector.y) - point.sy);
+        if (dist < bestDist) {
+          best = vector.label;
+          bestDist = dist;
+        }
+      }
+      held.current = best;
+    }
+    if (held.current && onDrag) {
+      onDrag(held.current, point.x, point.y);
+      return;
+    }
+    onPick?.(point.x, point.y);
+  }
+
   return (
     <svg
       viewBox={`0 0 ${size} ${size}`}
-      className="aspect-square w-full max-w-md rounded-lg bg-white"
+      className={`aspect-square w-full max-w-md rounded-lg bg-white ${onPick || onDrag ? "cursor-grab touch-none" : ""}`}
       role="img"
-      onClick={(event) => {
-        if (!onPick) return;
-        const rect = event.currentTarget.getBoundingClientRect();
-        const x = ((event.clientX - rect.left) / rect.width) * size;
-        const y = ((event.clientY - rect.top) / rect.height) * size;
-        onPick((x - center) / scale, (center - y) / scale);
+      onPointerDown={(event) => {
+        if (!onPick && !onDrag) return;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        move(event, true);
+      }}
+      onPointerMove={(event) => {
+        if ((!onPick && !onDrag) || event.buttons !== 1) return;
+        move(event, false);
+      }}
+      onPointerUp={() => {
+        held.current = null;
       }}
     >
       {[-2, -1, 1, 2].map((tick) => (
@@ -190,23 +257,36 @@ export function Heatmap({
       cells.push({ cx, cy, value });
     }
   }
+
+  function pickHeat(event: ReactPointerEvent<HTMLDivElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const fx = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    const fy = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+    onPick(Number((xMin + fx * (xMax - xMin)).toFixed(2)), Number((yMax - fy * (yMax - yMin)).toFixed(2)));
+  }
+
   return (
     <div>
       <div
-        className="grid overflow-hidden rounded-lg"
+        className="grid cursor-crosshair touch-none overflow-hidden rounded-lg"
         style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, 12px)` }}
+        onPointerDown={(event) => {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          pickHeat(event);
+        }}
+        onPointerMove={(event) => {
+          if (event.buttons !== 1) return;
+          pickHeat(event);
+        }}
       >
         {cells.map((cell, index) => {
           const t = Math.min(1, cell.value / peak);
           const selected = Math.abs(cell.cx - x) < (xMax - xMin) / cols && Math.abs(cell.cy - y) < (yMax - yMin) / rows;
           return (
-            <button
+            <span
               key={index}
-              type="button"
-              aria-label={`set inputs to ${cell.cx.toFixed(1)}, ${cell.cy.toFixed(1)}`}
               className="h-3 w-full"
               style={{ background: `rgb(${255 - t * 40}, ${255 - t * 170}, ${255 - t * 170})`, outline: selected ? "2px solid #172554" : "none" }}
-              onClick={() => onPick(Number(cell.cx.toFixed(2)), Number(cell.cy.toFixed(2)))}
             />
           );
         })}
@@ -224,7 +304,7 @@ export function Bars({ values, labels }: { values: number[]; labels: string[] })
         <div key={labels[index]} className="grid grid-cols-[4.5rem_1fr_3rem] items-center gap-2 text-xs">
           <span>{labels[index]}</span>
           <span className="h-3 rounded bg-slate-100">
-            <span className="block h-3 rounded bg-[#1d4ed8]" style={{ width: `${(Math.abs(value) / peak) * 100}%` }} />
+            <span className="bar-fill block h-3 rounded bg-[#1d4ed8]" style={{ width: `${(Math.abs(value) / peak) * 100}%` }} />
           </span>
           <span className="tabular text-right font-mono">{fmt(value, 2)}</span>
         </div>

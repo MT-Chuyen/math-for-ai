@@ -158,6 +158,7 @@ export function DotLesson() {
             </li>
           ))}
         </ul>
+        <Bars values={products} labels={products.map((_, index) => `pair ${index + 1}`)} />
         <p className="text-sm text-slate-700">
           The score is <Num value={score} tone="green" />. {score === 0 ? "Zero means the two lists are perpendicular: agreement and disagreement cancelled." : score > 0 ? "Positive means the query and the key agree more than they fight." : "Negative means they fight more than they agree."}
         </p>
@@ -507,6 +508,36 @@ export function RankLesson() {
   const solved = solve2(u, v, target);
   const rebuilt = solved.a === null || solved.b === null ? null : [solved.a * u[0] + solved.b * v[0], solved.a * u[1] + solved.b * v[1]];
   const dependent = Math.abs(area) < 0.08;
+  const [areaLine, setAreaLine] = useState("Drag the amber arrow v. The area goes to 0 when v turns onto u.");
+
+  function areaFor(nextAngle: number, nextMix: number) {
+    const nextRadians = (nextAngle * Math.PI) / 180;
+    const freeArrow: [number, number] = [Math.cos(nextRadians) * 2, Math.sin(nextRadians) * 2];
+    const nextV: [number, number] = [nextMix * u[0] + (1 - nextMix) * freeArrow[0], nextMix * u[1] + (1 - nextMix) * freeArrow[1]];
+    return det2(u, nextV);
+  }
+
+  function noteArea(nextAngle: number, nextMix: number, cause: "arrow" | "copy" | "target") {
+    const next = areaFor(nextAngle, nextMix);
+    if (cause === "target") {
+      setAreaLine(`The target moved. The area stayed ${fmt(area)}, because u and v did not change.`);
+      return;
+    }
+    if (Math.abs(next) < 0.08) {
+      setAreaLine(`The signed area went to ${fmt(next)}. v lies along u, so the parallelogram collapsed.`);
+      return;
+    }
+    if (Math.abs(next) < Math.abs(area) - 0.02) {
+      setAreaLine(`The signed area went from ${fmt(area)} to ${fmt(next)} and moved toward 0.`);
+      return;
+    }
+    if (Math.abs(next) > Math.abs(area) + 0.02) {
+      setAreaLine(`The signed area went from ${fmt(area)} to ${fmt(next)} and moved away from 0.`);
+      return;
+    }
+    setAreaLine(`The signed area is ${fmt(next)}. v’s direction barely moved.`);
+  }
+
   return (
     <Frame>
       <Section id="definition" kicker="Definition">
@@ -528,6 +559,14 @@ export function RankLesson() {
       <Section id="numbers" kicker="These numbers">
         <div className="grid items-center gap-4 lg:grid-cols-[auto_1fr]">
           <VectorPlane
+            lock={3.2}
+            onDrag={(label, x, y) => {
+              if (label !== "v") return;
+              const next = Math.round((Math.atan2(y, x) * 180) / Math.PI);
+              noteArea(next, 0, "arrow");
+              setMix(0);
+              setAngle(next);
+            }}
             vectors={[
               { x: u[0], y: u[1], color: "#1d4ed8", label: "u" },
               { x: v[0], y: v[1], color: "#b45309", label: "v" },
@@ -539,11 +578,36 @@ export function RankLesson() {
               { x: v[0], y: v[1] },
             ]}
             marker={{ x: target[0], y: target[1] }}
-            onPick={(x, y) => setTarget([Number(x.toFixed(2)), Number(y.toFixed(2))])}
+            onPick={(x, y) => {
+              noteArea(angle, mix, "target");
+              setTarget([Number(x.toFixed(2)), Number(y.toFixed(2))]);
+            }}
           />
           <div className="space-y-3">
-            <Scalar label="Direction of the free arrow, degrees" value={angle} onChange={setAngle} min={0} max={180} step={1} />
-            <Scalar label="How much v copies u" value={mix} onChange={setMix} min={0} max={1} step={0.01} note="At 1, v is a copy of u and the blue parallelogram has no area." />
+            <p className="text-sm leading-relaxed text-slate-800">{areaLine}</p>
+            <Scalar
+              label="Direction of the free arrow, degrees"
+              value={angle}
+              onChange={(value) => {
+                noteArea(value, mix, "arrow");
+                setAngle(value);
+              }}
+              min={-180}
+              max={180}
+              step={1}
+            />
+            <Scalar
+              label="How much v copies u"
+              value={mix}
+              onChange={(value) => {
+                noteArea(angle, value, "copy");
+                setMix(value);
+              }}
+              min={0}
+              max={1}
+              step={0.01}
+              note="At 1, v is a copy of u and the blue parallelogram has no area."
+            />
             <p className="text-sm text-slate-700">
               u = ({fmt(u[0])}, {fmt(u[1])}), v = ({fmt(v[0])}, {fmt(v[1])}). det = <Num value={u[0]} tone="blue" />×<Num value={v[1]} tone="amber" /> − <Num value={u[1]} tone="blue" />×<Num value={v[0]} tone="amber" /> = <Num value={u[0] * v[1]} /> − <Num value={u[1] * v[0]} /> = <Num value={area} tone="green" />.
             </p>
@@ -554,7 +618,7 @@ export function RankLesson() {
       </Section>
       <Section id="model" kicker="The same formula in a model">
         <Prose>
-          Click the plane to place a target output p. The layer can produce p when p = a u + b v for some scales a and b. A weight matrix whose columns are dependent cannot represent two independent features. A bottleneck that squeezes a wide vector through a short one is this fact used on purpose: the rank is at most the short dimension.
+          Drag on the picture to place a target output p, or drag the amber arrow to aim v. The layer can produce p when p = a u + b v for some scales a and b. A weight matrix whose columns are dependent cannot represent two independent features. A bottleneck that squeezes a wide vector through a short one is this fact used on purpose: the rank is at most the short dimension.
         </Prose>
         {solved.a !== null && solved.b !== null && rebuilt ? (
           <p className="text-sm text-slate-700">
@@ -583,6 +647,23 @@ export function EigenLesson() {
   const rayleigh = dot(image, vector) / dot(vector, vector);
   const [lambdaLarge, lambdaSmall] = symEigen(2, 1, 2);
   const aligned = Math.abs(cross) < 0.05;
+  const [prior, setPrior] = useState<{ degrees: number; stretch: number } | null>(null);
+
+  function aimAt(next: number) {
+    if (next === degrees) return;
+    setPrior({ degrees, stretch: rayleigh });
+    setDegrees(next);
+  }
+
+  let dragLine = "Drag v. The green arrow is Av. A turn changes the direction, and an eigenvector changes only the stretch.";
+  if (prior && aligned) {
+    dragLine = `Direction held. Av lies along v, so this move is only a stretch: λ = ${fmt(rayleigh)}.`;
+  } else if (prior && Math.abs(rayleigh - prior.stretch) >= 0.05) {
+    dragLine = `Direction changed. The stretch moved from ${fmt(prior.stretch)} to ${fmt(rayleigh)}.`;
+  } else if (prior) {
+    dragLine = `Direction changed. Av turned off v, and the stretch is still ${fmt(rayleigh)}.`;
+  }
+
   let walking: [number, number] = vector;
   const steps = [walking];
   for (let count = 0; count < 4; count += 1) {
@@ -612,13 +693,19 @@ export function EigenLesson() {
       <Section id="numbers" kicker="These numbers">
         <div className="grid items-center gap-4 lg:grid-cols-[auto_1fr]">
           <VectorPlane
+            lock={3.6}
+            onPick={(x, y) => {
+              if (x * x + y * y < 0.04) return;
+              aimAt(Math.round((Math.atan2(y, x) * 180) / Math.PI));
+            }}
             vectors={[
               { x: vector[0], y: vector[1], color: "#1d4ed8", label: "v" },
               { x: image[0], y: image[1], color: "#059669", label: "Av" },
             ]}
           />
           <div className="space-y-3">
-            <Scalar label="Angle of v, degrees" value={degrees} onChange={setDegrees} min={-180} max={180} step={1} />
+            <p className="text-sm leading-relaxed text-slate-800">{dragLine}</p>
+            <Scalar label="Angle of v, degrees" value={degrees} onChange={aimAt} min={-180} max={180} step={1} />
             <p className="text-sm text-slate-700">
               v = ({fmt(vector[0])}, {fmt(vector[1])}). Av = (2 v₁ + v₂, v₁ + 2 v₂) = ({fmt(image[0])}, {fmt(image[1])}).
             </p>
@@ -718,7 +805,7 @@ export function QuadraticLesson() {
           yMin={-2}
           yMax={2}
           onPick={(x, y) => setVector([x, y])}
-          caption="Pale is a low value. The bottom is the origin. Click to move x."
+          caption="Pale is a low value. The bottom is the origin. Drag to move x."
         />
         <Goal met={Math.abs(x1) < 0.15 && Math.abs(x2) < 0.15}>Move x to the origin. That is the only place this bowl is zero.</Goal>
       </Section>

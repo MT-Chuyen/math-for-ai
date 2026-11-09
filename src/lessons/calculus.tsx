@@ -44,7 +44,7 @@ export function FunctionLesson() {
         <p className="text-sm text-slate-700">
           Prediction = <Num value={prediction} tone="blue" />. Error = <Num value={prediction} /> − 3 = <Num value={error} tone="amber" />. Loss = (<Num value={error} />)² = <Num value={loss(weight)} tone="green" />.
         </p>
-        <Curve f={loss} xMin={-1} xMax={7} marker={weight} />
+        <Curve f={loss} xMin={-1} xMax={7} marker={weight} onScrub={setWeight} />
         <p className="text-xs text-slate-500">The dot is the current weight. The curve is every loss you could have picked.</p>
         <Goal met={Math.abs(weight - 3) < 0.05}>Set the weight to 3. The error is zero, so the square is zero. You can see the bottom. A training loop is not allowed to look at this picture. It only gets a slope.</Goal>
       </Section>
@@ -113,7 +113,7 @@ export function SlopeLesson() {
             {Number.isFinite(localSlope) && localSlope < 0 ? " Negative means the loss fell. That nudge helped." : ""}
             {Number.isFinite(localSlope) && localSlope > 0 ? " Positive means the loss rose. That nudge hurt." : ""}
           </p>
-          <Curve f={loss} xMin={-1} xMax={7} marker={weight} chord={run === 0 ? undefined : { x0: weight, x1: weight + run }} />
+          <Curve f={loss} xMin={-1} xMax={7} marker={weight} chord={run === 0 ? undefined : { x0: weight, x1: weight + run }} onScrub={setWeight} />
           <p className="mt-1 text-xs text-slate-500">Amber is the shortcut between the two weights. It cuts across the bend whenever the run is large.</p>
         </div>
         <Goal met={Number.isFinite(localSlope) && localSlope < 0 && weight < 3}>Stand to the left of 3 and pick a positive run. The shortcut slopes down, toward the bottom of the bowl.</Goal>
@@ -178,7 +178,7 @@ export function DerivativeLesson() {
             </p>
           )}
         </div>
-        <Curve f={square} xMin={-2} xMax={4} marker={x} tangent={h === 0 ? undefined : { x, slope: 2 * x }} chord={h === 0 ? undefined : { x0: x, x1: x + h }} />
+        <Curve f={square} xMin={-2} xMax={4} marker={x} tangent={h === 0 ? undefined : { x, slope: 2 * x }} chord={h === 0 ? undefined : { x0: x, x1: x + h }} onScrub={setX} />
         <p className="text-xs text-slate-500">Green is the true tangent, slope 2x. Amber is the shortcut out to x + h.</p>
         <div className="rounded-lg border border-slate-200 bg-white p-3">
           <p className="text-sm font-semibold">The same cancellation on the loss</p>
@@ -318,6 +318,9 @@ export function PartialsLesson() {
         <p className="text-sm text-slate-700">
           Check against the definition, nudging only w₁ by 0.0001: the quotient is <Num value={numeric1} digits={4} />. The partial says <Num value={dW1} digits={4} />.
         </p>
+        <p className="text-sm leading-relaxed text-slate-800">
+          Uphill arrow: follow the partials (∂L/∂w₁, ∂L/∂w₂) = (<Num value={dW1} />, <Num value={dW2} />). Training step: the opposite, (<Num value={-dW1} />, <Num value={-dW2} />).
+        </p>
         <Heatmap
           f={(w1, w2) => (w1 * x1 + w2 * x2 - target) ** 2}
           x={weights[0]}
@@ -327,7 +330,7 @@ export function PartialsLesson() {
           yMin={-1}
           yMax={4}
           onPick={(w1, w2) => setWeights([Number(w1.toFixed(2)), Number(w2.toFixed(2))])}
-          caption="Horizontal is w₁, vertical is w₂. Pale is a small loss. The pale band is every pair with w₁ + 2 w₂ = 5. Click to move."
+          caption="Horizontal is w₁, vertical is w₂. Pale is a small loss. The pale band is every pair with w₁ + 2 w₂ = 5. Drag across the picture."
         />
         <Goal met={Math.abs(dW1) < 0.05 && Math.abs(dW2) < 0.05}>Find a point on the pale band. Both partials go to zero together. Any weight pair with w₁ + 2 w₂ = 5 is a minimum, because the two inputs are redundant. That is the rank fact, showing up in a loss.</Goal>
       </Section>
@@ -348,7 +351,19 @@ export function DescentLesson() {
   const loss = (value: number) => (value - 3) ** 2;
   const slope = 2 * (weight - 3);
   const proposed = weight - eta * slope;
+  const factor = 1 - 2 * eta;
+  const distance = weight - 3;
   const escaped = Math.abs(weight - 3) > 8;
+  const flies = Math.abs(factor) > 1 + 1e-9;
+  const mirrors = Math.abs(factor + 1) <= 1e-9;
+  const stays = Math.abs(factor - 1) <= 1e-9;
+  const fate = flies
+    ? "It is not between −1 and 1, so the distance grows and the weight will fly off."
+    : mirrors
+      ? "It is −1, so the distance stays the same and the weight mirrors across 3."
+      : stays
+        ? "It is 1, so the distance to 3 does not change."
+        : "It sits between −1 and 1, so the distance shrinks toward 3.";
 
   useEffect(() => {
     if (!playing) return;
@@ -406,11 +421,8 @@ export function DescentLesson() {
         <p className="text-sm text-slate-700">
           Slope = 2 × (<Num value={weight} /> − 3) = <Num value={slope} />. One step: <Num value={weight} /> − <Num value={eta} /> × <Num value={slope} /> = <Num value={weight} /> − <Num value={eta * slope} /> = <Num value={proposed} tone="green" />.
         </p>
-        <p className="text-sm text-slate-700">
-          Distance to 3 is multiplied by 1 − 2×<Num value={eta} /> = <Num value={1 - 2 * eta} />.
-          {eta > 0 && eta < 1 ? " That factor is inside (−1, 1), so repeated steps walk toward 3." : ""}
-          {eta === 1 ? " The factor is −1, so the weight jumps to the mirror image and stays there, bouncing." : ""}
-          {eta > 1 ? " The factor is past −1, so each bounce is larger. The loss grows." : ""}
+        <p className={`rounded-md px-3 py-2 text-sm leading-relaxed ${flies ? "bg-amber-50 text-amber-950" : "border border-slate-200 bg-white text-slate-800"}`}>
+          Multiplier (1 − 2η) = <Num value={factor} />. Distance to 3 is <Num value={distance} /> now and <Num value={proposed - 3} /> after one step. {fate}
         </p>
         <div className="flex flex-wrap gap-2">
           <button type="button" className="rounded-md bg-[#172554] px-3 py-2 text-sm font-semibold text-white" onClick={step}>
@@ -423,7 +435,19 @@ export function DescentLesson() {
             Reset to 0
           </button>
         </div>
-        <Curve f={loss} xMin={-1} xMax={7} marker={escaped ? undefined : weight} trail={trail.filter((value) => value >= -1 && value <= 7)} />
+        <Curve
+          f={loss}
+          xMin={-1}
+          xMax={7}
+          marker={escaped ? undefined : weight}
+          trail={trail.filter((value) => value >= -1 && value <= 7)}
+          onScrub={(value) => {
+            setPlaying(false);
+            const next = Number(value.toFixed(2));
+            setWeight(next);
+            setTrail([next]);
+          }}
+        />
         {escaped ? <p className="text-sm text-amber-900">The weight is {fmt(weight)} and has left the chart. Shrink η below 1 and reset.</p> : null}
         <Goal met={!escaped && Math.abs(weight - 3) < 0.05}>From 0, with η at 0.1, step until the weight arrives at 3. Then try η = 1.2 and watch the same formula diverge.</Goal>
       </Section>
@@ -433,6 +457,164 @@ export function DescentLesson() {
         </Prose>
       </Section>
     </Frame>
+  );
+}
+
+const chainMoves = [
+  "Multiply to get z",
+  "Pass z through ReLU",
+  "Multiply to get ŷ",
+  "Square the miss",
+  "Start from dL/dŷ",
+  "Multiply by dŷ/dh",
+  "Multiply by dh/dz",
+  "Multiply by dz/dw₁",
+];
+
+function Flow({ lit, gate }: { lit: number; gate: number | null }) {
+  const nodes = ["x", "z", "ReLU", "ŷ", "L"];
+  return (
+    <div className="flex max-w-full flex-wrap items-center gap-2">
+      {nodes.map((name, index) => {
+        const on = index < lit;
+        const shut = on && name === "ReLU" && gate === 0;
+        return (
+          <div key={name} className="flex items-center gap-2">
+            <div
+              className={`grid h-12 w-12 place-items-center rounded-full text-xs font-semibold ${
+                shut ? "bg-amber-700 text-white" : on ? "bg-[#172554] text-white" : "bg-slate-200 text-slate-500"
+              }`}
+            >
+              {name}
+            </div>
+            {index < nodes.length - 1 ? <span className={`h-0.5 w-4 ${index < lit - 1 ? "bg-[#172554]" : "bg-slate-300"}`} /> : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ChainWalk({ x, w1, w2, step }: { x: number; w1: number; w2: number; step: ReturnType<typeof backprop> }) {
+  const [move, setMove] = useState(0);
+  const products = [step.dLossDprediction, step.dLossDhidden, step.dLossDz, step.dLossDw1];
+  const factors = [
+    { name: "dL/dŷ", value: step.dLossDprediction, why: "Slope of the square: 2 times the error." },
+    { name: "dŷ/dh", value: w2, why: "ŷ = w₂ h, so this local slope is the second weight." },
+    {
+      name: "dh/dz",
+      value: step.gate,
+      why: step.gate === 1 ? "z is positive, so ReLU’s slope is 1." : "z is not positive, so ReLU’s slope is 0. This factor shuts the product.",
+    },
+    { name: "dz/dw₁", value: x, why: "z = w₁ x, so this local slope is the data x." },
+  ];
+  const backward = move >= 4;
+
+  let body = null;
+  if (move === 0) {
+    body = (
+      <>
+        z = w₁ x. The first weight w₁ is <Num value={w1} tone="blue" /> and the data x is <Num value={x} tone="amber" />, so z, the number before ReLU, is <Num value={step.z} tone="green" />.
+      </>
+    );
+  } else if (move === 1) {
+    body =
+      step.gate === 1 ? (
+        <>
+          h = ReLU(z). z is <Num value={step.z} />, which is positive, so the gate dh/dz is <Num value={step.gate} /> and h stays <Num value={step.hidden} />.
+        </>
+      ) : (
+        <>
+          h = ReLU(z). z is <Num value={step.z} />, which is not positive, so the gate dh/dz is <Num value={step.gate} /> and h is <Num value={step.hidden} />.
+        </>
+      );
+  } else if (move === 2) {
+    body = (
+      <>
+        ŷ = w₂ h. The second weight w₂ is <Num value={w2} /> and h is <Num value={step.hidden} />, so the prediction ŷ is <Num value={step.prediction} tone="green" />.
+        {step.gate === 0 ? " h is 0 because the gate is shut, so the prediction is 0." : ""}
+      </>
+    );
+  } else if (move === 3) {
+    body = (
+      <>
+        L = (ŷ − t)². The error ŷ − t is <Num value={step.error} />. Square it and the loss L is <Num value={step.loss} tone="green" />.
+      </>
+    );
+  } else if (move === 4) {
+    body = (
+      <>
+        dL/dŷ = 2(ŷ − t). The error is <Num value={step.error} />, so this slope is <Num value={step.dLossDprediction} />. The running product starts at dL/dŷ.
+      </>
+    );
+  } else if (move === 5) {
+    body = (
+      <>
+        dŷ/dh = w₂. The prediction multiplies h by the second weight, so this factor is w₂ = <Num value={w2} />. The running product is dL/dŷ times w₂, now <Num value={step.dLossDhidden} />.
+      </>
+    );
+  } else if (move === 6) {
+    body =
+      step.gate === 1 ? (
+        <>
+          dh/dz is the ReLU gate. z is <Num value={step.z} />, which is positive, so the gate is <Num value={step.gate} /> and the running product stays <Num value={step.dLossDz} />.
+        </>
+      ) : (
+        <>
+          dh/dz is the ReLU gate. z is <Num value={step.z} />, which is not positive, so the gate is <Num value={step.gate} />. The running product is multiplied by 0 and becomes <Num value={step.dLossDz} />.
+        </>
+      );
+  } else {
+    body =
+      step.gate === 0 ? (
+        <>
+          dz/dw₁ = x = <Num value={x} />. The running product is already 0 because the gate was 0, so dL/dw₁ is <Num value={step.dLossDw1} />. w₁ gets no blame.
+        </>
+      ) : (
+        <>
+          dz/dw₁ = x. z = w₁ x, so the last factor is the data x = <Num value={x} />. The running product is dL/dw₁ = <Num value={step.dLossDw1} tone="green" />.
+        </>
+      );
+  }
+
+  return (
+    <div className="max-w-full rounded-lg bg-white p-3" data-chain-move={move}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
+          {backward ? "Backward" : "Forward"} · move {move + 1} of {chainMoves.length}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-semibold disabled:opacity-40" disabled={move === 0} onClick={() => setMove((value) => value - 1)}>
+            Previous move
+          </button>
+          <button
+            type="button"
+            className="rounded-md bg-[#172554] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40"
+            disabled={move === chainMoves.length - 1}
+            onClick={() => setMove((value) => value + 1)}
+          >
+            {move === 3 ? "Start backward" : "Next move"}
+          </button>
+        </div>
+      </div>
+      <div className="mt-3">
+        <Flow lit={backward ? 5 : move + 2} gate={move >= 1 ? step.gate : null} />
+      </div>
+      {move >= 1 && step.gate === 0 ? (
+        <p className="mt-2 text-sm leading-relaxed text-amber-950">
+          The amber ReLU is shut. z is <Num value={step.z} />, which is not positive, so h is 0 and any product through this gate becomes 0.
+        </p>
+      ) : null}
+      <p className="mt-3 text-sm font-semibold text-slate-900">{chainMoves[move]}</p>
+      <p className="mt-1 text-sm leading-relaxed text-slate-700" aria-live="polite">
+        {body}
+      </p>
+      {backward ? (
+        <div className="mt-3">
+          <Chain factors={factors} through={move - 4} running={products[move - 4]} resultName="dL/dw₁" />
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -469,21 +651,7 @@ export function ChainLesson() {
           <Scalar label="w₂" value={w2} onChange={setW2} min={-2} max={2} />
           <Scalar label="target t" value={target} onChange={setTarget} min={-1} max={3} />
         </div>
-        <div className="rounded-lg bg-white p-3 text-sm leading-relaxed text-slate-700">
-          <p>
-            Forward: z = <Num value={w1} tone="blue" /> × <Num value={x} tone="amber" /> = <Num value={step.z} />. ReLU gate = {step.gate}. h = <Num value={step.hidden} />. ŷ = <Num value={w2} /> × <Num value={step.hidden} /> = <Num value={step.prediction} />. Error = <Num value={step.error} />. Loss = <Num value={step.loss} tone="green" />.
-          </p>
-        </div>
-        <p className="text-sm font-semibold">Blame for w₁, multiplied from the loss backward</p>
-        <Chain
-          factors={[
-            { name: "dL/dŷ", value: step.dLossDprediction, why: "2 times the error" },
-            { name: "dŷ/dh", value: w2, why: "the second weight" },
-            { name: "dh/dz", value: step.gate, why: step.gate === 1 ? "ReLU is open" : "ReLU is shut" },
-            { name: "dz/dw₁", value: x, why: "z = w₁ x, so this slope is x" },
-          ]}
-          result={{ name: "dL/dw₁", value: step.dLossDw1 }}
-        />
+        <ChainWalk x={x} w1={w1} w2={w2} step={step} />
         <p className="text-sm text-slate-700">
           Separately, dL/dw₂ = dL/dŷ × h = <Num value={step.dLossDprediction} /> × <Num value={step.hidden} /> = <Num value={step.dLossDw2} tone="green" />. w₂ still learns when the hidden value is nonzero. w₁ learns only when the gate is open.
         </p>
@@ -495,6 +663,55 @@ export function ChainLesson() {
         </Prose>
       </Section>
     </Frame>
+  );
+}
+
+function GradientSentences({
+  scores,
+  probs,
+  grad,
+  correct,
+}: {
+  scores: number[];
+  probs: number[];
+  grad: number[];
+  correct: number;
+}) {
+  const [index, setIndex] = useState(0);
+  const safe = Math.min(index, scores.length - 1);
+  const star = safe === correct;
+  return (
+    <div className="max-w-full rounded-lg bg-white p-3" data-gradient-class={safe}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
+          Why the slope · class {safe + 1} of {scores.length}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-semibold disabled:opacity-40" disabled={safe === 0} onClick={() => setIndex((value) => value - 1)}>
+            Previous class
+          </button>
+          <button
+            type="button"
+            className="rounded-md bg-[#172554] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40"
+            disabled={safe === scores.length - 1}
+            onClick={() => setIndex((value) => value + 1)}
+          >
+            Next class
+          </button>
+        </div>
+      </div>
+      <p className="mt-2 text-sm leading-relaxed text-slate-800">
+        {star ? (
+          <>
+            Class {safe + 1} is the correct class. Its score z★ is {fmt(scores[safe])} and its probability p★ is {fmt(probs[safe], 3)}, so the slope ∂L/∂z★ is p★ − 1 = {fmt(grad[safe], 3)}.
+          </>
+        ) : (
+          <>
+            Class {safe + 1} is a wrong class. Its score zᵢ is {fmt(scores[safe])} and its probability pᵢ is {fmt(probs[safe], 3)}, so the slope ∂L/∂zᵢ is pᵢ = {fmt(grad[safe], 3)}.
+          </>
+        )}
+      </p>
+    </div>
   );
 }
 
@@ -576,6 +793,7 @@ export function SoftmaxLesson() {
             </tbody>
           </table>
         </div>
+        <GradientSentences scores={shifted} probs={stable.probs} grad={stable.grad} correct={correct} />
         <p className="text-sm text-slate-700">
           The probabilities add to <Num value={stable.probs.reduce((sum, value) => sum + value, 0)} />. The largest one differs from the unshifted softmax by <Num value={Math.max(...stable.probs.map((prob, index) => Math.abs(prob - base.probs[index])))} digits={4} />. Loss = −log(<Num value={stable.probs[correct]} digits={3} />) = <Num value={stable.loss} tone="green" />. Nudging the correct score by 0.0001 moves the loss at a rate of <Num value={numeric} digits={3} />. The formula p★ − 1 says <Num value={stable.grad[correct]} digits={3} />.
           {naiveFinite ? "" : " Naive exp overflowed. The probability column subtracted the largest score before calling exp, so it is still defined."}
@@ -704,12 +922,12 @@ export function CurvatureLesson() {
           <div className="rounded-lg bg-white p-3 text-sm">
             <p className="font-semibold">Wide, c = 1, stable below η = {fmt(wideLimit)}</p>
             <p className="mt-1">w = <Num value={wide} />. Slope = 2×1×(w − 3) = <Num value={2 * (wide - 3)} />. Next w = <Num value={wideNext} tone="green" />.</p>
-            <Curve f={(value) => (value - 3) ** 2} xMin={-1} xMax={7} marker={wide >= -1 && wide <= 7 ? wide : undefined} />
+            <Curve f={(value) => (value - 3) ** 2} xMin={-1} xMax={7} marker={wide >= -1 && wide <= 7 ? wide : undefined} onScrub={(value) => setWide(Number(value.toFixed(2)))} />
           </div>
           <div className="rounded-lg bg-white p-3 text-sm">
             <p className="font-semibold">Tight, c = 20, stable below η = {fmt(tightLimit, 3)}</p>
             <p className="mt-1">w = <Num value={tight} />. Slope = 2×20×(w − 3) = <Num value={40 * (tight - 3)} />. Next w = <Num value={tightNext} tone="green" />.</p>
-            <Curve f={(value) => 20 * (value - 3) ** 2} xMin={-1} xMax={7} marker={tight >= -1 && tight <= 7 ? tight : undefined} />
+            <Curve f={(value) => 20 * (value - 3) ** 2} xMin={-1} xMax={7} marker={tight >= -1 && tight <= 7 ? tight : undefined} onScrub={(value) => setTight(Number(value.toFixed(2)))} />
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
