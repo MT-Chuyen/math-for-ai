@@ -1,5 +1,7 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { snap } from "./math";
+import { lossPassport, useStoryCast, type StoryCast } from "./story";
+import { chapterFor } from "./storyChapters";
 
 export function fmt(value: number, digits = 2): string {
   if (!Number.isFinite(value)) return value > 0 ? "+∞" : "−∞";
@@ -289,6 +291,199 @@ export function Chain({
   );
 }
 
+export function LiveCaption({
+  symbol,
+  value,
+  digits = 2,
+  children,
+}: {
+  /** Symbol or short name that just moved, e.g. "q · k" or "w". */
+  symbol: string;
+  value?: number;
+  digits?: number;
+  /** Plain-language follow-on after the number, optional. */
+  children?: ReactNode;
+}) {
+  return (
+    <p className="live-caption rounded-md bg-white px-3 py-2 text-sm leading-relaxed text-slate-700 shadow-sm ring-1 ring-slate-200/80">
+      <span className="font-semibold text-[#172554]">{symbol}</span>
+      {value !== undefined ? (
+        <>
+          {" = "}
+          <span className="tabular font-mono text-slate-900">{fmt(value, digits)}</span>
+        </>
+      ) : null}
+      {children ? <span className="text-slate-600">{value !== undefined ? ". " : " "}{children}</span> : null}
+    </p>
+  );
+}
+
+function castChip(cast: StoryCast, key: string): { label: string; text: string } | null {
+  switch (key) {
+    case "x":
+      return { label: "x", text: `(${fmt(cast.x[0])}, ${fmt(cast.x[1])}, ${fmt(cast.x[2])})` };
+    case "k":
+      return { label: "k", text: `(${fmt(cast.k[0])}, ${fmt(cast.k[1])}, ${fmt(cast.k[2])})` };
+    case "W":
+      return { label: "W", text: "2×3 table" };
+    case "b":
+      return { label: "b", text: `(${fmt(cast.b[0])}, ${fmt(cast.b[1])})` };
+    case "w1":
+      return { label: "w₁", text: fmt(cast.w1) };
+    case "w2":
+      return { label: "w₂", text: fmt(cast.w2) };
+    case "target":
+      return { label: "t", text: fmt(cast.target) };
+    case "weight":
+      return { label: "w", text: fmt(cast.weight) };
+    case "eta":
+      return { label: "η", text: fmt(cast.eta) };
+    case "scores":
+      return { label: "z", text: `(${fmt(cast.scores[0])}, ${fmt(cast.scores[1])}, ${fmt(cast.scores[2])})` };
+    case "correct":
+      return { label: "★", text: `class ${cast.correct + 1}` };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Shared Loss Passport strip — L, ŷ, gate, ∂L/∂w₁, ∂L/∂w₂ from one backprop on the cast.
+ * Mount on Studio / pipeline / twins / chain / replay / synthesis so failure beats refresh everywhere.
+ */
+export function LossPassport({ cast: override }: { cast?: StoryCast }) {
+  const { cast: live } = useStoryCast();
+  const cast = override ?? live;
+  const stamp = lossPassport(cast);
+  const gateShut = !stamp.gateOpen;
+  const fields: { label: string; text: string; hot?: boolean }[] = [
+    { label: "L", text: fmt(stamp.loss) },
+    { label: "ŷ", text: fmt(stamp.prediction) },
+    { label: "gate", text: stamp.gateOpen ? "h>0" : "shut", hot: gateShut },
+    { label: "∂L/∂w₁", text: fmt(stamp.dLossDw1), hot: gateShut && stamp.dLossDw1 === 0 },
+    { label: "∂L/∂w₂", text: fmt(stamp.dLossDw2) },
+  ];
+
+  return (
+    <aside
+      className={`max-w-full overflow-hidden rounded-lg border px-3 py-2 shadow-sm ${
+        gateShut ? "border-amber-300 bg-amber-50/90" : "border-slate-200 bg-white"
+      }`}
+      aria-label="Loss passport"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Loss passport</p>
+        <p className="text-[11px] text-slate-500">same backprop · same cast</p>
+      </div>
+      <div className="mt-2 flex max-w-full gap-2 overflow-x-auto pb-0.5">
+        {fields.map((field) => (
+          <span
+            key={field.label}
+            className={`shrink-0 rounded-md px-2 py-1 font-mono text-[11px] tabular ${
+              field.hot ? "bg-amber-800 text-white" : "bg-[#172554] text-white"
+            }`}
+          >
+            <span className="opacity-80">{field.label}</span> {field.text}
+          </span>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
+/** Thin “Same run” strip: which cast values this lesson owns. Mobile-safe. */
+export function StoryStrip({ lessonId }: { lessonId: string }) {
+  const { cast, resetCast } = useStoryCast();
+  const chapter = chapterFor(lessonId);
+  if (!chapter) return null;
+  const owned = new Set(chapter.owns);
+  const chips = chapter.owns
+    .map((key) => castChip(cast, key))
+    .filter((chip): chip is { label: string; text: string } => chip !== null);
+  const shared = (["x", "weight", "eta", "scores"] as const)
+    .filter((key) => !owned.has(key))
+    .map((key) => castChip(cast, key))
+    .filter((chip): chip is { label: string; text: string } => chip !== null);
+
+  return (
+    <aside className="max-w-full overflow-hidden rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Same run</p>
+        <button type="button" className="text-xs font-semibold text-[#1d4ed8]" onClick={resetCast}>
+          Reset cast
+        </button>
+      </div>
+      <p className="mt-1 text-sm font-semibold text-slate-900">{chapter.title}</p>
+      <p className="mt-0.5 text-xs leading-snug text-slate-600">{chapter.blurb}</p>
+      <div className="mt-2 flex max-w-full gap-2 overflow-x-auto pb-0.5">
+        {chips.map((chip) => (
+          <span
+            key={chip.label}
+            className="shrink-0 rounded-md bg-[#172554] px-2 py-1 font-mono text-[11px] tabular text-white"
+            title="Owned on this page"
+          >
+            <span className="opacity-80">{chip.label}</span> {chip.text}
+          </span>
+        ))}
+        {shared.map((chip) => (
+          <span
+            key={chip.label}
+            className="shrink-0 rounded-md bg-slate-100 px-2 py-1 font-mono text-[11px] tabular text-slate-600"
+            title="Carried from the shared cast"
+          >
+            <span className="text-slate-400">{chip.label}</span> {chip.text}
+          </span>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
+export function StepControls({
+  step,
+  total,
+  onPrev,
+  onNext,
+  label,
+}: {
+  step: number;
+  total: number;
+  onPrev: () => void;
+  onNext: () => void;
+  /** Shown after "Step k of n", e.g. the current factor name. */
+  label?: string;
+}) {
+  const atStart = step <= 0;
+  const atEnd = step >= total - 1;
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        className="rounded-md bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 shadow-sm ring-1 ring-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
+        onClick={onPrev}
+        disabled={atStart}
+        aria-label="Previous step"
+      >
+        Prev
+      </button>
+      <button
+        type="button"
+        className="rounded-md bg-[#172554] px-3 py-1.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+        onClick={onNext}
+        disabled={atEnd}
+        aria-label="Next step"
+      >
+        Next
+      </button>
+      <span className="text-sm text-slate-600">
+        Step <span className="tabular font-mono text-slate-900">{Math.min(step + 1, total)}</span> of{" "}
+        <span className="tabular font-mono text-slate-900">{total}</span>
+        {label ? <span className="text-slate-500"> · {label}</span> : null}
+      </span>
+    </div>
+  );
+}
+
 export function MatrixCells({
   label,
   rows,
@@ -334,5 +529,209 @@ export function MatrixCells({
         )}
       </div>
     </fieldset>
+  );
+}
+
+/** Shared Peak↔Blend compare latch — same A|B intent across #scores → #spotlight → #mixer. */
+export type PeakBlendLatch = {
+  /** When true, surfaces show raw vs ÷√d side by side (A|B). */
+  compare: boolean;
+  /** Single-regime toggle when compare is off (true = ÷√d). */
+  scaleBySqrtD: boolean;
+};
+
+export const PEAK_BLEND_LATCH_KEY = "aimath:peak-blend-latch";
+
+export const DEFAULT_PEAK_BLEND_LATCH: PeakBlendLatch = {
+  compare: true,
+  scaleBySqrtD: true,
+};
+
+type PeakBlendListener = () => void;
+
+let peakBlendLatch: PeakBlendLatch = loadPeakBlendLatch();
+const peakBlendListeners = new Set<PeakBlendListener>();
+
+function loadPeakBlendLatch(): PeakBlendLatch {
+  try {
+    const text = sessionStorage.getItem(PEAK_BLEND_LATCH_KEY);
+    if (!text) return { ...DEFAULT_PEAK_BLEND_LATCH };
+    const parsed = JSON.parse(text) as Partial<PeakBlendLatch>;
+    return {
+      compare: parsed.compare !== false,
+      scaleBySqrtD: parsed.scaleBySqrtD !== false,
+    };
+  } catch {
+    return { ...DEFAULT_PEAK_BLEND_LATCH };
+  }
+}
+
+function persistPeakBlendLatch(next: PeakBlendLatch) {
+  try {
+    sessionStorage.setItem(PEAK_BLEND_LATCH_KEY, JSON.stringify(next));
+  } catch {
+    /* sessionStorage can be blocked; in-memory latch still works */
+  }
+}
+
+function notifyPeakBlend() {
+  for (const listener of peakBlendListeners) listener();
+}
+
+export function getPeakBlendLatch(): PeakBlendLatch {
+  return peakBlendLatch;
+}
+
+export function setPeakBlendLatch(patch: Partial<PeakBlendLatch>) {
+  peakBlendLatch = {
+    compare: patch.compare ?? peakBlendLatch.compare,
+    scaleBySqrtD: patch.scaleBySqrtD ?? peakBlendLatch.scaleBySqrtD,
+  };
+  persistPeakBlendLatch(peakBlendLatch);
+  notifyPeakBlend();
+}
+
+/** Subscribe to the shared Peak↔Blend A|B / √d latch. */
+export function usePeakBlendLatch() {
+  const [latch, setLatch] = useState<PeakBlendLatch>(() => getPeakBlendLatch());
+  useEffect(() => {
+    const sync = () => setLatch({ ...getPeakBlendLatch() });
+    peakBlendListeners.add(sync);
+    sync();
+    return () => {
+      peakBlendListeners.delete(sync);
+    };
+  }, []);
+  return {
+    latch,
+    setCompare: (compare: boolean) => setPeakBlendLatch({ compare }),
+    setScaleBySqrtD: (scaleBySqrtD: boolean) => setPeakBlendLatch({ scaleBySqrtD }),
+    setLatch: (patch: Partial<PeakBlendLatch>) => setPeakBlendLatch(patch),
+  };
+}
+
+/** max(α) from a softmax weight row. */
+export function maxAlpha(weights: number[]): number {
+  let max = 0;
+  for (const w of weights) if (w > max) max = w;
+  return max;
+}
+
+/** Gap between the top-2 scores in a row (sorted descending). */
+export function top2ScoreGap(scores: number[]): number {
+  if (scores.length < 2) return 0;
+  let first = -Infinity;
+  let second = -Infinity;
+  for (const s of scores) {
+    if (s > first) {
+      second = first;
+      first = s;
+    } else if (s > second) {
+      second = s;
+    }
+  }
+  return first - second;
+}
+
+/** Compact max(α) + top-2 gap readout for one regime. */
+export function PeakBlendStats({
+  label,
+  scores,
+  weights,
+  tone = "slate",
+}: {
+  label: string;
+  scores: number[];
+  weights: number[];
+  tone?: "raw" | "scaled" | "slate";
+}) {
+  const ring =
+    tone === "raw"
+      ? "ring-amber-300 bg-amber-50/80"
+      : tone === "scaled"
+        ? "ring-emerald-300 bg-emerald-50/80"
+        : "ring-slate-200 bg-slate-50";
+  return (
+    <div className={`rounded-lg px-3 py-2 text-sm ring-1 ${ring}`}>
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-1 font-mono tabular text-slate-900">
+        max(α) = <Num value={maxAlpha(weights)} digits={3} />
+      </p>
+      <p className="font-mono tabular text-slate-700">
+        top-2 gap = <Num value={top2ScoreGap(scores)} digits={2} />
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Shared A|B compare chrome for the Peak↔Blend ritual.
+ * Latches across #scores → #spotlight → #mixer so the cast never needs to change mid-story.
+ */
+export function PeakBlendLatchBar({
+  onOpen,
+  sqrtD,
+}: {
+  onOpen?: (id: string) => void;
+  sqrtD: number;
+}) {
+  const { latch, setCompare, setScaleBySqrtD } = usePeakBlendLatch();
+  return (
+    <aside
+      className="max-w-full overflow-hidden rounded-lg border border-[#172554]/15 bg-white px-3 py-2 shadow-sm"
+      aria-label="Peak blend compare latch"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Peak ↔ Blend</p>
+        <p className="text-[11px] text-slate-500">same cast · A|B latch</p>
+      </div>
+      <p className="mt-1 text-xs leading-snug text-slate-600">
+        Raw q·k gaps grow ~√d → peaked α; ÷√d restores a usable blend. Latch carries through scores → spotlight → mixer.
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          className={`rounded-md px-3 py-1.5 text-sm font-semibold ${
+            latch.compare ? "bg-[#172554] text-white" : "bg-white text-slate-800 shadow-sm ring-1 ring-slate-200"
+          }`}
+          aria-pressed={latch.compare}
+          onClick={() => setCompare(!latch.compare)}
+        >
+          A|B compare
+        </button>
+        {!latch.compare ? (
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={latch.scaleBySqrtD}
+              onChange={(e) => setScaleBySqrtD(e.target.checked)}
+            />
+            ÷√d ({fmt(sqrtD)})
+          </label>
+        ) : (
+          <span className="text-xs text-slate-500">
+            Left = raw · Right = ÷√d ({fmt(sqrtD)})
+          </span>
+        )}
+      </div>
+      {onOpen ? (
+        <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+          {[
+            ["scores", "Scores"],
+            ["spotlight", "Spotlight"],
+            ["mixer", "Mixer"],
+            ["norm", "Norm"],
+            ["dot", "Dot"],
+            ["softmax", "Softmax"],
+          ].map(([id, label]) => (
+            <li key={id}>
+              <button type="button" className="font-semibold text-[#1d4ed8]" onClick={() => onOpen(id)}>
+                {label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </aside>
   );
 }

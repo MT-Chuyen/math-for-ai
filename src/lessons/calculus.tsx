@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { backprop, diffQuotient, gdStep, newtonStep, softmaxLossGrad, stableStepLimit, transpose } from "../math";
-import { Curve, Heatmap } from "../plots";
-import { Board, Chain, Frame, Frac, Goal, MatrixCells, Num, Prose, Scalar, Section, VectorEditor, fmt } from "../ui";
+import { Bars, Curve, Heatmap } from "../plots";
+import { getCast, layerInputBlame, layerUpstreamG, openStoryHash, useFailureBeat, useStoryCast } from "../story";
+import { failureBeatChapters } from "../storyChapters";
+import { Board, Chain, Frame, Frac, Goal, LiveCaption, LossPassport, MatrixCells, Num, Prose, Scalar, Section, StepControls, StoryStrip, VectorEditor, fmt } from "../ui";
 
 function symbols(items: [string, string][]) {
   return (
@@ -318,9 +320,9 @@ export function PartialsLesson() {
         <p className="text-sm text-slate-700">
           Check against the definition, nudging only w₁ by 0.0001: the quotient is <Num value={numeric1} digits={4} />. The partial says <Num value={dW1} digits={4} />.
         </p>
-        <p className="text-sm leading-relaxed text-slate-800">
-          Uphill arrow: follow the partials (∂L/∂w₁, ∂L/∂w₂) = (<Num value={dW1} />, <Num value={dW2} />). Training step: the opposite, (<Num value={-dW1} />, <Num value={-dW2} />).
-        </p>
+        <LiveCaption symbol="∇L">
+          Uphill arrow: follow the partials (∂L/∂w₁, ∂L/∂w₂) = ({fmt(dW1)}, {fmt(dW2)}). Training step: the opposite, ({fmt(-dW1)}, {fmt(-dW2)}).
+        </LiveCaption>
         <Heatmap
           f={(w1, w2) => (w1 * x1 + w2 * x2 - target) ** 2}
           x={weights[0]}
@@ -330,7 +332,9 @@ export function PartialsLesson() {
           yMin={-1}
           yMax={4}
           onPick={(w1, w2) => setWeights([Number(w1.toFixed(2)), Number(w2.toFixed(2))])}
-          caption="Horizontal is w₁, vertical is w₂. Pale is a small loss. The pale band is every pair with w₁ + 2 w₂ = 5. Drag across the picture."
+          gradient={{ dx: dW1, dy: dW2 }}
+          showUphill
+          caption="Horizontal is w₁, vertical is w₂. Pale is a small loss. The navy arrow is uphill ∇L. Drag across the picture; the pale band is every pair with w₁ + 2 w₂ = 5."
         />
         <Goal met={Math.abs(dW1) < 0.05 && Math.abs(dW2) < 0.05}>Find a point on the pale band. Both partials go to zero together. Any weight pair with w₁ + 2 w₂ = 5 is a minimum, because the two inputs are redundant. That is the rank fact, showing up in a loss.</Goal>
       </Section>
@@ -344,10 +348,13 @@ export function PartialsLesson() {
 }
 
 export function DescentLesson() {
-  const [weight, setWeight] = useState(0);
-  const [eta, setEta] = useState(0.1);
+  const { cast, patchCast } = useStoryCast();
+  const { beat, applyFailureBeat } = useFailureBeat();
+  const weight = cast.weight;
+  const eta = cast.eta;
   const [playing, setPlaying] = useState(false);
-  const [trail, setTrail] = useState<number[]>([0]);
+  const [trail, setTrail] = useState<number[]>(() => [getCast().weight]);
+  const [stepNote, setStepNote] = useState("Scrub the bowl or press Play. Each update multiplies the distance to 3 by (1 − 2η).");
   const loss = (value: number) => (value - 3) ** 2;
   const slope = 2 * (weight - 3);
   const proposed = weight - eta * slope;
@@ -364,11 +371,18 @@ export function DescentLesson() {
       : stays
         ? "It is 1, so the distance to 3 does not change."
         : "It sits between −1 and 1, so the distance shrinks toward 3.";
+  const descentBeat = beat?.id === "bad-eta" || beat?.id === "honest" ? beat : null;
 
   useEffect(() => {
     if (!playing) return;
     const id = window.setInterval(() => {
-      setWeight((current) => gdStep(current, eta));
+      const live = getCast();
+      const next = gdStep(live.weight, live.eta);
+      const nextFactor = 1 - 2 * live.eta;
+      setStepNote(
+        `One step: w went from ${fmt(live.weight)} to ${fmt(next)}. Distance ${fmt(live.weight - 3)} × (${fmt(nextFactor)}) → ${fmt(next - 3)}.`,
+      );
+      patchCast({ weight: next });
     }, 450);
     return () => window.clearInterval(id);
   }, [playing, eta]);
@@ -380,12 +394,59 @@ export function DescentLesson() {
 
   function step() {
     setPlaying(false);
-    setWeight(proposed);
+    setStepNote(
+      `One step: w went from ${fmt(weight)} to ${fmt(proposed)}. Distance ${fmt(distance)} × (${fmt(factor)}) → ${fmt(proposed - 3)}.`,
+    );
+    patchCast({ weight: proposed });
     setTrail((history) => [...history.slice(-24), proposed]);
   }
 
   return (
     <Frame>
+      <StoryStrip lessonId="descent" />
+      <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-sm">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-800/80">
+          Failure beat{descentBeat ? ` · ${descentBeat.label}` : ""}
+        </p>
+        <p className="mt-1 font-semibold text-slate-900">
+          Say aloud: {descentBeat?.sayAloud ?? "η too large ⇒ distance to 3 grows each step"}
+        </p>
+        <p className="mt-0.5 text-xs text-slate-600">
+          {descentBeat ? failureBeatChapters[descentBeat.id].blurb : failureBeatChapters["bad-eta"].blurb}
+        </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="rounded-md bg-amber-800 px-3 py-1.5 text-sm font-semibold text-white"
+            onClick={() => {
+              setPlaying(false);
+              applyFailureBeat("bad-eta");
+              setTrail([0.2]);
+              setStepNote("Bad η beat: η = 1.4. Play and watch the weight fly.");
+            }}
+          >
+            Trigger bad η
+          </button>
+          <button
+            type="button"
+            className="rounded-md bg-white px-3 py-1.5 text-sm font-semibold shadow-sm ring-1 ring-slate-200"
+            onClick={() => {
+              setPlaying(false);
+              applyFailureBeat("honest");
+              setTrail([2.4]);
+              setStepNote("Honest recovery: η = 0.12. Steps should shrink toward 3.");
+            }}
+          >
+            Honest recovery
+          </button>
+          <button type="button" className="text-sm font-semibold text-[#1d4ed8]" onClick={() => openStoryHash("twins")}>
+            Jump to #twins
+          </button>
+          <button type="button" className="text-sm font-semibold text-[#1d4ed8]" onClick={() => openStoryHash("pipeline")}>
+            Jump to #pipeline
+          </button>
+        </div>
+      </div>
       <Section id="definition" kicker="Definition">
         <Prose>
           The derivative points uphill. To make the loss smaller, step against it. The learning rate η decides how long that step is. On this bowl the update multiplies the distance to the minimum by (1 − 2η). The distance shrinks when that factor sits strictly between −1 and 1, which means η is between 0 and 1. At η = 1 the weight reflects across the minimum and never settles. Above 1 it reflects and flies farther every step.
@@ -409,14 +470,30 @@ export function DescentLesson() {
             value={weight}
             onChange={(value) => {
               setPlaying(false);
-              setWeight(value);
+              patchCast({ weight: value });
               setTrail([value]);
+              setStepNote(`Set w = ${fmt(value)}. Distance to 3 is ${fmt(value - 3)}; the next step multiplies that by ${fmt(1 - 2 * eta)}.`);
             }}
             min={Math.min(-1, Math.floor(weight))}
             max={Math.max(7, Math.ceil(weight))}
             note={escaped ? "The weight has left the drawn bowl. The chart stays on −1 to 7 so the minimum remains visible." : "The chart covers −1 to 7. A large learning rate can leave it."}
           />
-          <Scalar label="η, learning rate" value={eta} onChange={setEta} min={0} max={1.3} step={0.05} />
+          <Scalar
+            label="η, learning rate"
+            value={eta}
+            onChange={(value) => {
+              patchCast({ eta: value });
+              const nextFactor = 1 - 2 * value;
+              setStepNote(
+                Math.abs(nextFactor) > 1
+                  ? `η = ${fmt(value)} makes (1 − 2η) = ${fmt(nextFactor)}. That is outside (−1, 1), so the weight will fly off.`
+                  : `η = ${fmt(value)} makes (1 − 2η) = ${fmt(nextFactor)}. Distance to 3 will shrink on the next step.`,
+              );
+            }}
+            min={0}
+            max={1.3}
+            step={0.05}
+          />
         </div>
         <p className="text-sm text-slate-700">
           Slope = 2 × (<Num value={weight} /> − 3) = <Num value={slope} />. One step: <Num value={weight} /> − <Num value={eta} /> × <Num value={slope} /> = <Num value={weight} /> − <Num value={eta * slope} /> = <Num value={proposed} tone="green" />.
@@ -424,6 +501,9 @@ export function DescentLesson() {
         <p className={`rounded-md px-3 py-2 text-sm leading-relaxed ${flies ? "bg-amber-50 text-amber-950" : "border border-slate-200 bg-white text-slate-800"}`}>
           Multiplier (1 − 2η) = <Num value={factor} />. Distance to 3 is <Num value={distance} /> now and <Num value={proposed - 3} /> after one step. {fate}
         </p>
+        <LiveCaption symbol="w" value={weight}>
+          {stepNote}
+        </LiveCaption>
         <div className="flex flex-wrap gap-2">
           <button type="button" className="rounded-md bg-[#172554] px-3 py-2 text-sm font-semibold text-white" onClick={step}>
             Take one step
@@ -431,7 +511,16 @@ export function DescentLesson() {
           <button type="button" className="rounded-md bg-white px-3 py-2 text-sm font-semibold" onClick={() => setPlaying((value) => !value)}>
             {playing ? "Stop" : "Play"}
           </button>
-          <button type="button" className="rounded-md bg-white px-3 py-2 text-sm font-semibold" onClick={() => { setPlaying(false); setWeight(0); setTrail([0]); }}>
+          <button
+            type="button"
+            className="rounded-md bg-white px-3 py-2 text-sm font-semibold"
+            onClick={() => {
+              setPlaying(false);
+              patchCast({ weight: 0 });
+              setTrail([0]);
+              setStepNote("Reset to w = 0. Multiplier (1 − 2η) still decides whether the next steps shrink or fly.");
+            }}
+          >
             Reset to 0
           </button>
         </div>
@@ -444,8 +533,9 @@ export function DescentLesson() {
           onScrub={(value) => {
             setPlaying(false);
             const next = Number(value.toFixed(2));
-            setWeight(next);
+            patchCast({ weight: next });
             setTrail([next]);
+            setStepNote(`Scrubbed to w = ${fmt(next)}. Distance to 3 is ${fmt(next - 3)}; the next step multiplies that by ${fmt(factor)}.`);
           }}
         />
         {escaped ? <p className="text-sm text-amber-900">The weight is {fmt(weight)} and has left the chart. Shrink η below 1 and reset.</p> : null}
@@ -580,30 +670,26 @@ function ChainWalk({ x, w1, w2, step }: { x: number; w1: number; w2: number; ste
   return (
     <div className="max-w-full rounded-lg bg-white p-3" data-chain-move={move}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
-          {backward ? "Backward" : "Forward"} · move {move + 1} of {chainMoves.length}
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" className="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-semibold disabled:opacity-40" disabled={move === 0} onClick={() => setMove((value) => value - 1)}>
-            Previous move
-          </button>
-          <button
-            type="button"
-            className="rounded-md bg-[#172554] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40"
-            disabled={move === chainMoves.length - 1}
-            onClick={() => setMove((value) => value + 1)}
-          >
-            {move === 3 ? "Start backward" : "Next move"}
-          </button>
-        </div>
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">{backward ? "Backward" : "Forward"}</p>
+        <StepControls
+          step={move}
+          total={chainMoves.length}
+          onPrev={() => setMove((value) => value - 1)}
+          onNext={() => setMove((value) => value + 1)}
+          label={move === 3 ? "Start backward next" : chainMoves[move]}
+        />
       </div>
       <div className="mt-3">
         <Flow lit={backward ? 5 : move + 2} gate={move >= 1 ? step.gate : null} />
       </div>
-      {move >= 1 && step.gate === 0 ? (
-        <p className="mt-2 text-sm leading-relaxed text-amber-950">
-          The amber ReLU is shut. z is <Num value={step.z} />, which is not positive, so h is 0 and any product through this gate becomes 0.
-        </p>
+      {move >= 1 ? (
+        <div className="mt-2">
+          <LiveCaption symbol="dh/dz" value={step.gate}>
+            {step.gate === 1
+              ? "The gate is open. z is positive, so ReLU passes the value and the running product can stay nonzero."
+              : "The gate is shut. The amber ReLU blocks every factor behind it, so the product through this gate becomes 0."}
+          </LiveCaption>
+        </div>
       ) : null}
       <p className="mt-3 text-sm font-semibold text-slate-900">{chainMoves[move]}</p>
       <p className="mt-1 text-sm leading-relaxed text-slate-700" aria-live="polite">
@@ -619,13 +705,56 @@ function ChainWalk({ x, w1, w2, step }: { x: number; w1: number; w2: number; ste
 }
 
 export function ChainLesson() {
-  const [x, setX] = useState(2);
-  const [w1, setW1] = useState(0.5);
-  const [w2, setW2] = useState(1.5);
-  const [target, setTarget] = useState(1);
+  const { cast, patchCast } = useStoryCast();
+  const { beat, applyFailureBeat } = useFailureBeat();
+  const x = cast.x[0];
+  const w1 = cast.w1;
+  const w2 = cast.w2;
+  const target = cast.target;
   const step = backprop(x, w1, w2, target);
+  const chainBeat = beat?.id === "dead-relu" || beat?.id === "honest" ? beat : null;
   return (
     <Frame>
+      <div className="mb-3 space-y-2">
+        <StoryStrip lessonId="chain" />
+        <LossPassport cast={cast} />
+      </div>
+      <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-sm">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-800/80">
+          Failure beat{chainBeat ? ` · ${chainBeat.label}` : ""}
+        </p>
+        <p className="mt-1 font-semibold text-slate-900">
+          Say aloud: {chainBeat?.sayAloud ?? "gate shut ⇒ no blame on w₁"}
+        </p>
+        <p className="mt-0.5 text-xs text-slate-600">
+          {chainBeat ? failureBeatChapters[chainBeat.id].blurb : failureBeatChapters["dead-relu"].blurb}
+        </p>
+        <p className="mt-1 font-mono text-xs text-slate-600">
+          z=<Num value={step.z} /> · gate={step.gate} · ∂L/∂w₁=<Num value={step.dLossDw1} />
+        </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="rounded-md bg-amber-800 px-3 py-1.5 text-sm font-semibold text-white"
+            onClick={() => applyFailureBeat("dead-relu")}
+          >
+            Trigger gate shut
+          </button>
+          <button
+            type="button"
+            className="rounded-md bg-white px-3 py-1.5 text-sm font-semibold shadow-sm ring-1 ring-slate-200"
+            onClick={() => applyFailureBeat("honest")}
+          >
+            Honest recovery
+          </button>
+          <button type="button" className="text-sm font-semibold text-[#1d4ed8]" onClick={() => openStoryHash("pipeline")}>
+            Jump to #pipeline
+          </button>
+          <button type="button" className="text-sm font-semibold text-[#1d4ed8]" onClick={() => openStoryHash("twins")}>
+            Jump to #twins
+          </button>
+        </div>
+      </div>
       <Section id="definition" kicker="Definition">
         <Prose>
           The loss depends on the prediction, the prediction depends on a hidden value, the hidden value depends on a pre-activation, and the pre-activation depends on w₁. The chain rule says the full slope is the product of those local slopes. Backprop starts at the loss, where the numbers are known, and multiplies backward. ReLU’s local slope is 1 when its input is positive and 0 when its input is negative. A negative pre-activation therefore zeroes every factor that has to pass through it, including dL/dw₁.
@@ -646,10 +775,17 @@ export function ChainLesson() {
       </Section>
       <Section id="numbers" kicker="These numbers">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Scalar label="x, the data" value={x} onChange={setX} min={-2} max={3} />
-          <Scalar label="w₁" value={w1} onChange={setW1} min={-2} max={2} />
-          <Scalar label="w₂" value={w2} onChange={setW2} min={-2} max={2} />
-          <Scalar label="target t" value={target} onChange={setTarget} min={-1} max={3} />
+          <Scalar
+            label="x, the data"
+            value={x}
+            onChange={(value) => patchCast({ x: [value, cast.x[1], cast.x[2]] })}
+            min={-2}
+            max={3}
+            note="This is x₁ from the shared cast input."
+          />
+          <Scalar label="w₁" value={w1} onChange={(value) => patchCast({ w1: value })} min={-2} max={2} />
+          <Scalar label="w₂" value={w2} onChange={(value) => patchCast({ w2: value })} min={-2} max={2} />
+          <Scalar label="target t" value={target} onChange={(value) => patchCast({ target: value })} min={-1} max={3} />
         </div>
         <ChainWalk x={x} w1={w1} w2={w2} step={step} />
         <p className="text-sm text-slate-700">
@@ -671,34 +807,29 @@ function GradientSentences({
   probs,
   grad,
   correct,
+  index,
+  onIndexChange,
 }: {
   scores: number[];
   probs: number[];
   grad: number[];
   correct: number;
+  index: number;
+  onIndexChange: (next: number) => void;
 }) {
-  const [index, setIndex] = useState(0);
   const safe = Math.min(index, scores.length - 1);
   const star = safe === correct;
   return (
     <div className="max-w-full rounded-lg bg-white p-3" data-gradient-class={safe}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
-          Why the slope · class {safe + 1} of {scores.length}
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" className="rounded-md bg-slate-100 px-3 py-1.5 text-sm font-semibold disabled:opacity-40" disabled={safe === 0} onClick={() => setIndex((value) => value - 1)}>
-            Previous class
-          </button>
-          <button
-            type="button"
-            className="rounded-md bg-[#172554] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40"
-            disabled={safe === scores.length - 1}
-            onClick={() => setIndex((value) => value + 1)}
-          >
-            Next class
-          </button>
-        </div>
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Why the slope</p>
+        <StepControls
+          step={safe}
+          total={scores.length}
+          onPrev={() => onIndexChange(safe - 1)}
+          onNext={() => onIndexChange(safe + 1)}
+          label={star ? `class ${safe + 1} (correct ★)` : `class ${safe + 1}`}
+        />
       </div>
       <p className="mt-2 text-sm leading-relaxed text-slate-800">
         {star ? (
@@ -716,8 +847,10 @@ function GradientSentences({
 }
 
 export function SoftmaxLesson() {
-  const [logits, setLogits] = useState([1.2, 0.3, -0.4]);
-  const [correct, setCorrect] = useState(0);
+  const { cast, patchCast } = useStoryCast();
+  const logits = cast.scores;
+  const correct = cast.correct;
+  const [focus, setFocus] = useState(0);
   const [shift, setShift] = useState(0);
   const [boost, setBoost] = useState(false);
   const shifted = logits.map((value) => value + shift + (boost ? 1000 : 0));
@@ -728,8 +861,10 @@ export function SoftmaxLesson() {
   const h = 1e-4;
   const nudged = softmaxLossGrad(shifted.map((value, index) => (index === correct ? value + h : value)), correct);
   const numeric = (nudged.loss - stable.loss) / h;
+  const tallest = stable.probs.reduce((best, prob, index, list) => (prob > list[best] ? index : best), 0);
   return (
     <Frame>
+      <StoryStrip lessonId="softmax" />
       <Section id="definition" kicker="Definition">
         <Prose>
           A classifier ends in raw scores, one per class. Softmax turns them into positive numbers that add to 1, by exponentiating and dividing by the sum. Cross-entropy looks only at the correct class and takes the negative log. A probability of 1 has loss 0. A probability near 0 has a large loss. Adding the same constant to every score does not change the probabilities, which is why a careful implementation subtracts the largest score before calling exp: the math is identical, and exp stops overflowing.
@@ -757,18 +892,39 @@ export function SoftmaxLesson() {
         ])}
       </Section>
       <Section id="numbers" kicker="These numbers">
-        <VectorEditor label="Scores z" hint="Three classes." values={logits} onChange={setLogits} min={-2} max={8} />
+        <VectorEditor
+          label="Scores z"
+          hint="Same three scores as Studio’s probability panel."
+          values={logits}
+          onChange={(next) => patchCast({ scores: [next[0], next[1], next[2]] })}
+          min={-2}
+          max={8}
+        />
         <Scalar label="Add this constant to every score" value={shift} onChange={setShift} min={0} max={12} step={0.5} note="The probabilities do not move. Only the raw scores do." />
         <button type="button" className={`rounded-md px-3 py-1.5 text-sm font-semibold ${boost ? "bg-[#172554] text-white" : "bg-white"}`} onClick={() => setBoost((value) => !value)}>
           {boost ? "Remove the +1000 overflow test" : "Add 1000 to every score"}
         </button>
         <div className="flex flex-wrap gap-2">
           {[0, 1, 2].map((index) => (
-            <button key={index} type="button" className={`rounded-md px-3 py-1.5 text-sm font-semibold ${correct === index ? "bg-[#172554] text-white" : "bg-white"}`} onClick={() => setCorrect(index)}>
+            <button
+              key={index}
+              type="button"
+              className={`rounded-md px-3 py-1.5 text-sm font-semibold ${correct === index ? "bg-[#172554] text-white" : "bg-white"}`}
+              onClick={() => {
+                patchCast({ correct: index });
+                setFocus(index);
+              }}
+            >
               Correct class {index + 1}
             </button>
           ))}
         </div>
+        <Bars
+          values={stable.probs}
+          labels={["class 1", "class 2", "class 3"]}
+          highlightIndex={correct}
+          caption={`Correct class ${correct + 1} is highlighted. Tallest bar is class ${tallest + 1} (p = ${fmt(stable.probs[tallest], 3)}).`}
+        />
         <div className="overflow-x-auto">
           <table className="text-sm">
             <thead>
@@ -782,7 +938,7 @@ export function SoftmaxLesson() {
             </thead>
             <tbody className="font-mono">
               {shifted.map((value, index) => (
-                <tr key={index}>
+                <tr key={index} className={index === focus ? "bg-blue-50" : undefined}>
                   <td className="pr-4">{index + 1}</td>
                   <td className="pr-4">{fmt(value)}</td>
                   <td className="pr-4">{Number.isFinite(naiveExp[index]) ? fmt(naiveExp[index], 3) : "overflow"}</td>
@@ -793,7 +949,7 @@ export function SoftmaxLesson() {
             </tbody>
           </table>
         </div>
-        <GradientSentences scores={shifted} probs={stable.probs} grad={stable.grad} correct={correct} />
+        <GradientSentences scores={shifted} probs={stable.probs} grad={stable.grad} correct={correct} index={focus} onIndexChange={setFocus} />
         <p className="text-sm text-slate-700">
           The probabilities add to <Num value={stable.probs.reduce((sum, value) => sum + value, 0)} />. The largest one differs from the unshifted softmax by <Num value={Math.max(...stable.probs.map((prob, index) => Math.abs(prob - base.probs[index])))} digits={4} />. Loss = −log(<Num value={stable.probs[correct]} digits={3} />) = <Num value={stable.loss} tone="green" />. Nudging the correct score by 0.0001 moves the loss at a rate of <Num value={numeric} digits={3} />. The formula p★ − 1 says <Num value={stable.grad[correct]} digits={3} />.
           {naiveFinite ? "" : " Naive exp overflowed. The probability column subtracted the largest score before calling exp, so it is still defined."}
@@ -810,26 +966,41 @@ export function SoftmaxLesson() {
 }
 
 export function JacobianLesson() {
-  const [weights, setWeights] = useState([
-    [1, 2],
-    [-1, 0.5],
-  ]);
-  const [input, setInput] = useState([0.5, -0.2]);
-  const [upstream, setUpstream] = useState([0.4, -0.3]);
-  const y = [
-    weights[0][0] * input[0] + weights[0][1] * input[1],
-    weights[1][0] * input[0] + weights[1][1] * input[1],
-  ];
+  const { cast, patchCast, resetCast } = useStoryCast();
+  const weights = cast.W;
+  const input = cast.x;
+  const upstream = layerUpstreamG(cast);
   const flipped = transpose(weights);
-  const backward = [
-    flipped[0][0] * upstream[0] + flipped[0][1] * upstream[1],
-    flipped[1][0] * upstream[0] + flipped[1][1] * upstream[1],
+  const backward = layerInputBlame(cast);
+  const y = [
+    weights[0][0] * input[0] + weights[0][1] * input[1] + weights[0][2] * input[2],
+    weights[1][0] * input[0] + weights[1][1] * input[1] + weights[1][2] * input[2],
   ];
   const h = 0.0001;
-  const y1Nudge = weights[0][0] * (input[0] + h) + weights[0][1] * input[1];
+  const y1Nudge = weights[0][0] * (input[0] + h) + weights[0][1] * input[1] + weights[0][2] * input[2];
   const measured = (y1Nudge - y[0]) / h;
   return (
     <Frame>
+      <StoryStrip lessonId="jacobian" />
+      <div className="mb-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Forward-then-flip dual</p>
+        <p className="mt-1 font-semibold text-slate-900">Say aloud: forward faces rows; blame faces columns = Wᵀ rows.</p>
+        <p className="mt-1 font-mono text-xs text-slate-700">
+          g = (<Num value={upstream[0]} />, <Num value={upstream[1]} />) from CE ∂L/∂z on cast scores · Wᵀg = (
+          <Num value={backward[0]} />, <Num value={backward[1]} />, <Num value={backward[2]} />)
+        </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button type="button" className="rounded-md bg-white px-3 py-1.5 text-sm font-semibold shadow-sm ring-1 ring-slate-200" onClick={resetCast}>
+            Reset cast
+          </button>
+          <button type="button" className="text-sm font-semibold text-[#1d4ed8]" onClick={() => openStoryHash("machine")}>
+            Open #machine
+          </button>
+          <button type="button" className="text-sm font-semibold text-[#1d4ed8]" onClick={() => openStoryHash("transpose")}>
+            Open #transpose
+          </button>
+        </div>
+      </div>
       <Section id="definition" kicker="Definition">
         <Prose>
           When the output is a vector, every output has its own partial for every input. The Jacobian is that table. For y = Wx, output i’s partial with respect to input j is exactly the weight Wᵢⱼ. So the Jacobian is W. The loss is upstream of y. Its slope with respect to input j adds, over every output, “how the loss feels that output” times “how that output feels this input”. Writing that sum as a matrix product puts W on the left only after it is transposed.
@@ -839,7 +1010,7 @@ export function JacobianLesson() {
         <Board>
           <span>∂L/∂xⱼ = Σᵢ ∂L/∂yᵢ · Wᵢⱼ</span>
         </Board>
-        <Prose>In vector form that sum is Wᵀ times the upstream gradient. The transpose is the algebra lesson’s flip, used so each input lines up with the weights that touch it.</Prose>
+        <Prose>In vector form that sum is Wᵀ times the upstream gradient. The transpose is the algebra lesson’s flip, used so each input lines up with the weights that touch it. Same cast W and g as #machine.</Prose>
         {symbols([
           ["∂L/∂yᵢ", "the slope arriving from the loss, one per output"],
           ["Wᵢⱼ", "how much input j moves output i"],
@@ -848,34 +1019,66 @@ export function JacobianLesson() {
       </Section>
       <Section id="numbers" kicker="These numbers">
         <div className="flex flex-wrap gap-6">
-          <MatrixCells label="W" rows={weights} onChange={setWeights} />
-          <VectorEditor label="x" hint="The layer input." values={input} onChange={(value) => setInput(value)} min={-2} max={2} />
-          <VectorEditor label="∂L/∂y" hint="The slope handed back by the loss." values={upstream} onChange={setUpstream} min={-2} max={2} />
+          <MatrixCells
+            label="W (shared cast)"
+            rows={weights}
+            onChange={(next) =>
+              patchCast({
+                W: [
+                  [next[0][0], next[0][1], next[0][2]],
+                  [next[1][0], next[1][1], next[1][2]],
+                ],
+              })
+            }
+          />
+          <VectorEditor
+            label="x"
+            hint="Same cast input as #machine."
+            values={input}
+            onChange={(value) => patchCast({ x: [value[0], value[1], value[2]] })}
+            min={-2}
+            max={2}
+          />
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">g = ∂L/∂y (shared)</p>
+            <p className="mt-1 font-mono text-sm">
+              (<Num value={upstream[0]} tone="amber" />, <Num value={upstream[1]} tone="amber" />)
+            </p>
+            <p className="mt-1 max-w-xs text-xs text-slate-600">
+              First two CE ∂L/∂z on cast scores. Change scores / ★ in Studio to move g; Reset restores DEFAULT_CAST.
+            </p>
+          </div>
         </div>
         <p className="text-sm text-slate-700">
-          y₁ = <Num value={weights[0][0]} />×<Num value={input[0]} /> + <Num value={weights[0][1]} />×<Num value={input[1]} /> = <Num value={y[0]} tone="green" />. y₂ = <Num value={y[1]} tone="green" />.
+          y₁ = <Num value={weights[0][0]} />×<Num value={input[0]} /> + <Num value={weights[0][1]} />×<Num value={input[1]} /> + <Num value={weights[0][2]} />×<Num value={input[2]} /> = <Num value={y[0]} tone="green" />. y₂ = <Num value={y[1]} tone="green" />.
         </p>
         <p className="text-sm text-slate-700">
           Nudge x₁ by 0.0001 and y₁ changes at rate <Num value={measured} digits={4} />. The table says that rate is W₁₁ = <Num value={weights[0][0]} digits={4} />. The Jacobian entry is the weight.
         </p>
         <div className="rounded-lg bg-white p-3 text-sm leading-relaxed text-slate-700">
           <p>
-            ∂L/∂x₁ = ∂L/∂y₁ × W₁₁ + ∂L/∂y₂ × W₂₁ = <Num value={upstream[0]} />×<Num value={weights[0][0]} /> + <Num value={upstream[1]} />×<Num value={weights[1][0]} /> = <Num value={backward[0]} tone="green" />.
+            ∂L/∂x₁ = Σᵢ gᵢ Wᵢ₁ = <Num value={upstream[0]} />×<Num value={weights[0][0]} /> + <Num value={upstream[1]} />×<Num value={weights[1][0]} /> = <Num value={backward[0]} tone="green" />.
           </p>
           <p>
-            ∂L/∂x₂ = ∂L/∂y₁ × W₁₂ + ∂L/∂y₂ × W₂₂ = <Num value={upstream[0]} />×<Num value={weights[0][1]} /> + <Num value={upstream[1]} />×<Num value={weights[1][1]} /> = <Num value={backward[1]} tone="green" />.
+            ∂L/∂x₂ = Σᵢ gᵢ Wᵢ₂ = <Num value={upstream[0]} />×<Num value={weights[0][1]} /> + <Num value={upstream[1]} />×<Num value={weights[1][1]} /> = <Num value={backward[1]} tone="green" />.
           </p>
           <p>
-            Wᵀ is [[{fmt(flipped[0][0])}, {fmt(flipped[0][1])}], [{fmt(flipped[1][0])}, {fmt(flipped[1][1])}]], and Wᵀ times the upstream gradient is ({fmt(backward[0])}, {fmt(backward[1])}). Same pair.
+            ∂L/∂x₃ = Σᵢ gᵢ Wᵢ₃ = <Num value={upstream[0]} />×<Num value={weights[0][2]} /> + <Num value={upstream[1]} />×<Num value={weights[1][2]} /> = <Num value={backward[2]} tone="green" />.
+          </p>
+          <p>
+            Wᵀ row 1 = ({fmt(flipped[0][0])}, {fmt(flipped[0][1])}); Wᵀg = ({fmt(backward[0])}, {fmt(backward[1])}, {fmt(backward[2])}). Same triple as #machine transpose blame.
           </p>
         </div>
+        <LiveCaption symbol="forward W, blame Wᵀ">
+          Same entries — only the facing flips. Column j · g is row j of Wᵀ times g.
+        </LiveCaption>
         <Goal met={Math.abs(backward[0]) < 0.05}>
-          Make ∂L/∂x₁ equal 0. The long sum and the product with Wᵀ are the same number, so either one reaching 0 finishes it.
+          Make ∂L/∂x₁ near 0 (edit W or Studio scores). The long sum and Wᵀg stay locked together.
         </Goal>
       </Section>
       <Section id="model" kicker="The same formula in a model">
         <Prose>
-          “Multiply the upstream gradient by W transpose” is this page. It is not a second, unrelated rule. It is ∂yᵢ/∂xⱼ = Wᵢⱼ written as a product so a whole batch can be differentiated at once. Forward uses W. Backward uses Wᵀ. The entries are the same numbers, facing the other way, which is the transpose you already computed by hand.
+          “Multiply the upstream gradient by W transpose” is this page. It is not a second, unrelated rule. It is ∂yᵢ/∂xⱼ = Wᵢⱼ written as a product so a whole batch can be differentiated at once. Forward uses W. Backward uses Wᵀ. The entries are the same numbers, facing the other way — the forward-then-flip dual you just walked on #machine.
         </Prose>
       </Section>
     </Frame>

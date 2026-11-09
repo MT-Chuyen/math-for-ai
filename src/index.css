@@ -35,3 +35,73 @@ input[type="range"] {
 .bar-fill {
   transition: width 180ms ease;
 }
+
+.live-caption {
+  transition: background-color 160ms ease, box-shadow 160ms ease;
+}
+
+@media (max-width: 390px) {
+  body {
+    overflow-x: hidden;
+  }
+}
+
+/* Idea subway map — motion only */
+.idea-map-viewport {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.idea-map-svg {
+  min-width: 640px;
+}
+
+.idea-map-band {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.idea-map-label {
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.idea-map-here-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.idea-map-line {
+  transition: opacity 180ms ease, stroke-width 180ms ease;
+}
+
+.idea-map-station {
+  cursor: pointer;
+  outline: none;
+  transition: opacity 160ms ease;
+}
+
+.idea-map-station:focus-visible circle:nth-of-type(1),
+.idea-map-station:focus-visible circle:nth-of-type(2) {
+  stroke: #1d4ed8;
+}
+
+.idea-map-here-ring {
+  animation: idea-map-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes idea-map-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}

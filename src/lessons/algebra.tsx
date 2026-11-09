@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { add, apply2, cosine, det2, dot, l1, matmul, norm, scale, softmax, solve2, symEigen, transpose } from "../math";
 import { Bars, Heatmap, VectorPlane } from "../plots";
-import { Board, Frame, Frac, Goal, MatrixCells, Num, Prose, Scalar, Section, SumLine, VectorEditor, fmt } from "../ui";
+import { useStoryCast } from "../story";
+import { Board, Frame, Frac, Goal, LiveCaption, MatrixCells, Num, Prose, Scalar, Section, StepControls, StoryStrip, SumLine, VectorEditor, fmt } from "../ui";
 
 function symbols(items: [string, string][]) {
   return (
@@ -122,12 +123,14 @@ export function CombineLesson() {
 }
 
 export function DotLesson() {
-  const [query, setQuery] = useState([1, 0.5, -1]);
-  const [key, setKey] = useState([0.5, 2, 0.25]);
+  const { cast, patchCast } = useStoryCast();
+  const query = cast.x;
+  const key = cast.k;
   const products = query.map((value, index) => value * key[index]);
   const score = dot(query, key);
   return (
     <Frame>
+      <StoryStrip lessonId="dot" />
       <Section id="definition" kicker="Definition">
         <Prose>
           The dot product compresses two lists into one number. At each position, multiply the two numbers that share that position. Then add the products. A positive product is agreement at that position. A negative product is a fight. The final number is what is left after the fights.
@@ -146,8 +149,18 @@ export function DotLesson() {
       </Section>
       <Section id="numbers" kicker="These numbers">
         <div className="grid gap-3 lg:grid-cols-2">
-          <VectorEditor label="q, a query" hint="One token asking." values={query} onChange={setQuery} />
-          <VectorEditor label="k, a key" hint="One token being asked about." values={key} onChange={setKey} />
+          <VectorEditor
+            label="q, a query"
+            hint="Same cast vector x. Studio’s blue arrow is the first two entries."
+            values={query}
+            onChange={(next) => patchCast({ x: [next[0], next[1], next[2]] })}
+          />
+          <VectorEditor
+            label="k, a key"
+            hint="Same cast key k. Studio’s amber arrow is the first two entries."
+            values={key}
+            onChange={(next) => patchCast({ k: [next[0], next[1], next[2]] })}
+          />
         </div>
         <SumLine terms={query.map((value, index) => ({ left: value, right: key[index] }))} />
         <ul className="space-y-1 text-sm text-slate-700">
@@ -271,15 +284,14 @@ export function NormLesson() {
 }
 
 export function LinearLesson() {
-  const [weights, setWeights] = useState([
-    [0.5, -1, 2],
-    [1, 0.5, 0],
-  ]);
-  const [input, setInput] = useState([2, 1, 0.5]);
-  const [bias, setBias] = useState([0.1, -0.2]);
+  const { cast, patchCast } = useStoryCast();
+  const weights = cast.W;
+  const input = cast.x;
+  const bias = cast.b;
   const outputs = weights.map((row, index) => dot(row, input) + bias[index]);
   return (
     <Frame>
+      <StoryStrip lessonId="linear-layer" />
       <Section id="definition" kicker="Definition">
         <Prose>
           A matrix is a stack of vectors, written as a table. Multiplying that table by x builds one dot product per row. Row i only looks at its own weights. The bias is a vector added after those dots, one number per output. The layer is called linear because doubling x doubles the Wx part, and adding two inputs adds their outputs. Bias shifts the result without breaking that pattern in the weights.
@@ -299,9 +311,32 @@ export function LinearLesson() {
       </Section>
       <Section id="numbers" kicker="These numbers">
         <div className="flex flex-wrap gap-6">
-          <MatrixCells label="W, two neurons by three inputs" rows={weights} onChange={setWeights} />
-          <VectorEditor label="x" hint="One number per column of W." values={input} onChange={setInput} />
-          <VectorEditor label="b" hint="Added after the dot. One number per neuron." values={bias} onChange={setBias} min={-2} max={2} />
+          <MatrixCells
+            label="W, two neurons by three inputs"
+            rows={weights}
+            onChange={(next) =>
+              patchCast({
+                W: [
+                  [next[0][0], next[0][1], next[0][2]],
+                  [next[1][0], next[1][1], next[1][2]],
+                ],
+              })
+            }
+          />
+          <VectorEditor
+            label="x"
+            hint="Same cast input as the query in Studio and the dot lesson."
+            values={input}
+            onChange={(next) => patchCast({ x: [next[0], next[1], next[2]] })}
+          />
+          <VectorEditor
+            label="b"
+            hint="Added after the dot. One number per neuron."
+            values={bias}
+            onChange={(next) => patchCast({ b: [next[0], next[1]] })}
+            min={-2}
+            max={2}
+          />
         </div>
         {weights.map((row, index) => (
           <div key={index}>
@@ -454,6 +489,13 @@ export function TransposeLesson() {
   const batched = matmul([query], transpose(keys))[0];
   return (
     <Frame>
+      <StoryStrip lessonId="transpose" />
+      <div className="mb-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Forward-then-flip cue</p>
+        <p className="mt-1 text-sm text-slate-800">
+          Say aloud: forward faces rows; blame faces columns = Wᵀ rows. Same dual on #machine → #jacobian — Kᵀ faces keys for the same reason, not a new mechanism.
+        </p>
+      </div>
       <Section id="definition" kicker="Definition">
         <Prose>
           Transpose flips a table across its diagonal. The number that was in row i, column j moves to row j, column i. No products happen. The shape swaps: a 2×3 table becomes a 3×2 table. Rows of the original are columns of the transpose.
@@ -584,7 +626,9 @@ export function RankLesson() {
             }}
           />
           <div className="space-y-3">
-            <p className="text-sm leading-relaxed text-slate-800">{areaLine}</p>
+            <LiveCaption symbol="det" value={area}>
+              {areaLine}
+            </LiveCaption>
             <Scalar
               label="Direction of the free arrow, degrees"
               value={angle}
@@ -640,6 +684,7 @@ export function EigenLesson() {
     [1, 2],
   ];
   const [degrees, setDegrees] = useState(10);
+  const [powerStep, setPowerStep] = useState(0);
   const radians = (degrees * Math.PI) / 180;
   const vector: [number, number] = [Math.cos(radians), Math.sin(radians)];
   const image = apply2(matrix, vector);
@@ -653,6 +698,7 @@ export function EigenLesson() {
     if (next === degrees) return;
     setPrior({ degrees, stretch: rayleigh });
     setDegrees(next);
+    setPowerStep(0);
   }
 
   let dragLine = "Drag v. The green arrow is Av. A turn changes the direction, and an eigenvector changes only the stretch.";
@@ -670,6 +716,12 @@ export function EigenLesson() {
     walking = apply2(matrix, walking);
     steps.push(walking);
   }
+  const shown = steps[Math.min(powerStep, steps.length - 1)];
+  const shownLen = norm(shown);
+  const towardLarge =
+    Math.abs(shown[0] - shown[1]) < Math.abs(shown[0] + shown[1])
+      ? "closer to (1, 1), the large-λ direction"
+      : "still mixed between (1, 1) and (1, −1)";
   return (
     <Frame>
       <Section id="definition" kicker="Definition">
@@ -704,7 +756,9 @@ export function EigenLesson() {
             ]}
           />
           <div className="space-y-3">
-            <p className="text-sm leading-relaxed text-slate-800">{dragLine}</p>
+            <LiveCaption symbol="λ" value={rayleigh}>
+              {dragLine}
+            </LiveCaption>
             <Scalar label="Angle of v, degrees" value={degrees} onChange={aimAt} min={-180} max={180} step={1} />
             <p className="text-sm text-slate-700">
               v = ({fmt(vector[0])}, {fmt(vector[1])}). Av = (2 v₁ + v₂, v₁ + 2 v₂) = ({fmt(image[0])}, {fmt(image[1])}).
@@ -715,6 +769,16 @@ export function EigenLesson() {
             <Goal met={aligned}>Rotate to 45° or to −45°. Those are the eigenvectors. The felt stretch snaps to 3 or to 1, and the cross product vanishes.</Goal>
           </div>
         </div>
+        <StepControls
+          step={powerStep}
+          total={steps.length}
+          onPrev={() => setPowerStep((value) => value - 1)}
+          onNext={() => setPowerStep((value) => value + 1)}
+          label={powerStep === 0 ? "start v" : `apply A, ${powerStep} time${powerStep === 1 ? "" : "s"}`}
+        />
+        <LiveCaption symbol={powerStep === 0 ? "v" : `A^${powerStep} v`} value={shownLen}>
+          Length is {fmt(shownLen)}. After {powerStep} multiply-by-A step{powerStep === 1 ? "" : "s"}, the arrow is {towardLarge}, because λ = {fmt(lambdaLarge)} beats λ = {fmt(lambdaSmall)}.
+        </LiveCaption>
         <div className="overflow-x-auto">
           <table className="text-sm">
             <thead>
@@ -726,16 +790,18 @@ export function EigenLesson() {
             </thead>
             <tbody>
               {steps.map((step, index) => (
-                <tr key={index} className="font-mono">
+                <tr key={index} className={`font-mono ${index === powerStep ? "bg-blue-50 ring-1 ring-[#1d4ed8]/30" : ""}`}>
                   <td className="pr-4">{index}</td>
-                  <td className="pr-4">({fmt(step[0])}, {fmt(step[1])})</td>
+                  <td className="pr-4">
+                    ({fmt(step[0])}, {fmt(step[1])})
+                  </td>
                   <td>{fmt(norm(step))}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <Prose>Each row is A applied to the row above. Unless you started exactly on (1, −1), the arrow swings toward (1, 1) and the length starts tripling, because 3 beats 1.</Prose>
+        <Prose>Each row is A applied to the row above. Step through the table: unless you started exactly on (1, −1), the arrow swings toward (1, 1) and the length starts tripling, because 3 beats 1.</Prose>
       </Section>
       <Section id="model" kicker="The same formula in a model">
         <Prose>
